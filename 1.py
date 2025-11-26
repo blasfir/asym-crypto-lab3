@@ -5,14 +5,14 @@ import math
 
 def gcd(a, b):
     while b != 0:
-        a, b = b, a % b  # ok
+        a, b = b, a % b
     return a
 
 
 def jacobi_symbol(a, b):
     if b <= 0 or b % 2 == 0:
-        raise ValueError("b має бути додатним непарним цілим числом")  # ok
-    a = a % b
+        raise ValueError("b має бути додатним непарним цілим числом")
+    a %= b
     result = 1
 
     while a != 0:
@@ -20,43 +20,34 @@ def jacobi_symbol(a, b):
             a //= 2
             if b % 8 in (3, 5):
                 result = -result
-
         a, b = b, a
         if a % 4 == 3 and b % 4 == 3:
             result = -result
-
         a %= b
 
-    if b == 1:
-        return result
-    else:
-        return 0
+    return result if b == 1 else 0
 
 
 def solovay_strassen(p, k=40):
     if p < 2:
-        raise ValueError("p має бути натуральним числом більше 1")  # ok
+        raise ValueError("p має бути натуральним числом більше 1")
     if p == 2:
         return True
     if p % 2 == 0:
         return False
 
-    i = 0
-
-    while i < k:
-
+    for _ in range(k):
         x = random.randint(2, p - 1)
         g = gcd(x, p)
         if g > 1:
             return False
         j_s = jacobi_symbol(x, p)
         d = pow(x, (p - 1) // 2, p)
+
         if j_s == -1:
             j_s = p - 1
         if d != j_s:
             return False
-
-        i += 1
 
     return True
 
@@ -74,9 +65,7 @@ def bm_generator_bytes(p, a, n, state=None):
 
 
 def generate_blum_prime(bits, a=5):
-
     byte_len = (bits + 7) // 8
-
     state = secrets.randbelow(2**bits - 1) + 1
 
     while True:
@@ -86,16 +75,12 @@ def generate_blum_prime(bits, a=5):
             n=byte_len,
             state=state
         )
-
         blum_p = int.from_bytes(rand_bytes, "big")
-
         blum_p |= (1 << (bits - 1))
-
         blum_p |= 1
 
         if blum_p % 4 != 3:
             continue
-
         if solovay_strassen(blum_p):
             return blum_p
 
@@ -112,7 +97,6 @@ def GenerateKeyPair(bits=512):
     q = generate_blum_prime(bits)
     n = p * q
     b = random.randrange(1, n)
-
     return (n, b), (p, q, b)
 
 
@@ -137,11 +121,9 @@ def format_message(m, n):
 
 def Encrypt(m_bytes, n, b):
     x = format_message(m_bytes, n)
-
     y = (x * (x + b)) % n
     c1 = (x + b) % 2
     c2 = jacobi_symbol(x + b, n)
-
     return y, c1, c2
 
 
@@ -166,33 +148,45 @@ def sqrt_mod_blum(y, p, q):
     return roots
 
 
+# -------------------------------
+#     НОВА ФУНКЦІЯ РОЗПАКУВАННЯ
+# -------------------------------
+def decode_from_x(x, n):
+    l = (n.bit_length() + 7) // 8
+    x_bytes = x.to_bytes(l, "big")
+    r_bytes = x_bytes[l - 8:l]   # останні 8 байтів — r
+
+    # Шукаємо всі місця, де може бути 0xFF
+    for i in range(l - 8):
+        if x_bytes[i] != 0xFF:
+            continue
+
+        m_bytes = x_bytes[i+1:l-8]
+
+        # Перевіряємо, чи цей x має правильний формат
+        x_re = int.from_bytes(
+            b"\x00"*(l-8) + b"\xFF" + m_bytes + r_bytes,
+            "big"
+        )
+
+        if x_re == x:
+            return m_bytes
+
+    return None
+
+
+# -------------------------------
+#       ВИПРАВЛЕНИЙ DECRYPT
+# -------------------------------
 def Decrypt(y, c1, c2, p, q, b, n):
     Diskr = (b*b + 4*y) % n
-
     roots = sqrt_mod_blum(Diskr, p, q)
-
     inv2 = inv(2, n)
-
-    candidates = []
 
     for s in roots:
         x = ((-b + s) * inv2) % n
-        candidates.append(x)
-
-    for x in candidates:
-        if (x + b) % 2 == c1 and jacobi_symbol(x + b, n) == c2:
-
-            l = (n.bit_length() + 7) // 8
-            x_bytes = x.to_bytes(l, "big")
-
-            marker_pos = x_bytes.rfind(b"\xFF", 0, l - 8)
-            if marker_pos == -1:
-                continue
-
-            m_start = marker_pos + 1
-            m_end = l - 8
-            m_bytes = x_bytes[m_start:m_end]
-
+        m_bytes = decode_from_x(x, n)
+        if m_bytes is not None:
             return m_bytes
 
     raise ValueError(
@@ -219,7 +213,6 @@ def Sign(m_bytes, p, q, n):
             break
 
     roots = sqrt_mod_blum(x, p, q)
-
     s = random.choice(roots)
 
     return s, r
@@ -237,112 +230,11 @@ def Verify(m_bytes, s, r, n):
     return x_actual == x_expected
 
 
-"""public_key, private_key = GenerateKeyPair(bits=64)
-
-n,  b = public_key
-p, q, b_secret = private_key
-
-print()
-print("Відкритий ключ (n, b):")
-print()
-print(n, b)
-print()
-print("Секретний (p, q, b):")
-print()
-print(p, q, b_secret)
-
-message = b"Hi"
-ciphertext = Encrypt(message, n, b)
-print()
-print("Шифротекст (y, c1, c2):")
-print()
-print(ciphertext)
-
-y, c1, c2 = ciphertext
-
-decrypted = Decrypt(y, c1, c2, p, q, b, n)
-print()
-print("Розшифроване повідомлення:", decrypted)
-
-signature_s, signature_r = Sign(message, p, q, n)
-print()
-print("Підпис s:")
-print()
-print("s =", signature_s)
-print("r =", signature_r)
-
-is_valid = Verify(message, signature_s, signature_r, n)
-print()
-print("Підпис коректний?", is_valid)"""
-
-"""public_A, private_A = GenerateKeyPair(bits=64)
+"""public_A, private_A = GenerateKeyPair(128)
 n_A, b_A = public_A
-p_A, q_A, bA_secret = private_A
-
-print("\nАбонент A\n")
-print("Відкритий ключ A (n, b):")
-print(n_A, b_A)
-
-print("\nСекретний ключ A (p, q, b):")
-print(p_A, q_A, bA_secret)
-
-message_A = b"Hi"
-
-ciphertext_A = Encrypt(message_A, n_A, b_A)
-y_A, c1_A, c2_A = ciphertext_A
-
-print("\nПовідомлення A:", message_A)
-print("Шифротекст A (y, c1, c2):")
-print(ciphertext_A)
-
-decrypted_A = Decrypt(y_A, c1_A, c2_A, p_A, q_A, b_A, n_A)
-print("\nРозшифроване повідомлення A:", decrypted_A)
-
-signature_s_A, signature_r_A = Sign(message_A, p_A, q_A, n_A)
-print("\nЦифровий підпис A:")
-print("s =", signature_s_A)
-print("r =", signature_r_A)
-
-is_valid_A = Verify(message_A, signature_s_A, signature_r_A, n_A)
-print("\nПеревірка підпису A:", is_valid_A)
-
-public_B, private_B = GenerateKeyPair(bits=64)
-n_B, b_B = public_B
-p_B, q_B, bB_secret = private_B
-
-print("\n\nАбонент B\n")
-print("Відкритий ключ B (n, b):")
-print(n_B, b_B)
-
-print("\nСекретний ключ B (p, q, b):")
-print(p_B, q_B, bB_secret)
-
-message_B = b"Ok"
-
-ciphertext_B = Encrypt(message_B, n_B, b_B)
-y_B, c1_B, c2_B = ciphertext_B
-
-print("\nПовідомлення B:", message_B)
-print("Шифротекст B (y, c1, c2):")
-print(ciphertext_B)
-
-decrypted_B = Decrypt(y_B, c1_B, c2_B, p_B, q_B, b_B, n_B)
-print("\nРозшифроване повідомлення B:", decrypted_B)
-
-signature_s_B, signature_r_B = Sign(message_B, p_B, q_B, n_B)
-print("\nЦифровий підпис B:")
-print("s =", signature_s_B)
-print("r =", signature_r_B)
-
-is_valid_B = Verify(message_B, signature_s_B, signature_r_B, n_B)
-print("\nПеревірка підпису B:", is_valid_B)
-"""
-
-public_A, private_A = GenerateKeyPair(128)
-n_A, b_A = public_A
-p_A, q_A, bA_secret = private_A
-n_A, b_A = 192827371338375899954458776063700458041, 184418897985937775264503290077291585462
-p_A, q_A, bA_secret = 13810455163267087363, 13962419707299455507, 184418897985937775264503290077291585462
+p_A, q_A, bA_secret = private_A"""
+"""n_A, b_A = 58901066684138891971696524309168736993861125128992468841146511056043223388253, 10091763845116835198971492930882110254597539620667102926184254958602996067657
+p_A, q_A, bA_secret = 225421953262520129214635218346707849111, 261292504264410973271035992629745671723, 10091763845116835198971492930882110254597539620667102926184254958602996067657
 
 print("\nАбонент A\n")
 print("Відкритий ключ A (n, b):")
@@ -355,9 +247,20 @@ print(p_A, q_A, bA_secret)
 message_A = b"Hi"
 
 c1 = 1
-c2 = 0
-y = 0X50FB1F4581A7D1F8805D7C4A65D88CDA
+c2 = 1
+y = 0X2E3BE3411B9E6AF9D2C80A25C1AFF575738CBAE667761E40B2CFB06621399B96
 
 decrypted = Decrypt(y, c1, c2, p_A, q_A, b_A, n_A)
 print()
-print("Розшифроване повідомлення:", decrypted)
+print("Розшифроване повідомлення:", decrypted)"""
+
+n, b = 0XD7D6838FEEA0D726545FDF291033A7A1, 0XEE74055912B63D3B8F2544CC663E374
+
+m_bytes = b"Hi"
+
+enc = Encrypt(m_bytes, n, b)
+y_A, c1_A, c2_A = enc
+print()
+print(hex(y_A).upper())
+print(c1_A)
+print(c2_A)
